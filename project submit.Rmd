@@ -1,0 +1,1278 @@
+---
+title: "Waiting times"
+author: "Xiangtian Duan"
+date: "2022/6/6"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#1.load package
+
+
+```{r}
+library(tidyverse)
+library(nycflights13)
+library(fuzzyjoin)
+library(lubridate)
+library(Hmisc)
+library(faraway)
+library(MASS)
+library(pscl)
+library(lme4)
+library(naniar)
+library("glmmTMB")
+library("bbmle") 
+library("cowplot")
+library(corrplot)
+library(ggpubr)
+library(plyr)
+library(dplyr)
+library(d3heatmap)
+library(lattice)
+library(pscl)
+library("glmmTMB")
+library("bbmle") 
+library("ggplot2")
+library(DHARMa)
+```
+
+#2.import dataset
+
+```{r}
+# load data into R
+sot_performance_ongoing_waits_dec21 <- read_csv("sot_performance_ongoing_waits_dec21.csv", 
+  col_types = cols(
+  
+    MonthEnding = col_datetime(),
+    HBT = col_factor(),
+    HBTQF = col_character(),
+    PatientType = col_factor(),
+    Specialty = col_factor(),
+    SpecialtyQF = col_character(),
+    NumberWaiting = col_double(),
+    NumberWaitingQF = col_character(),
+    NumberWaitingOver12Weeks = col_double(),
+    NumberWaitingOver12WeeksQF = col_character()
+  )
+) %>%
+  replace_na(list(HBTQF = "sapce",
+                  SpecialtyQF = "sapce",
+                  NumberWaitingQF = "sapce",
+                  NumberWaitingOver12WeeksQF = "sapce"))
+
+
+sot_removal_reasons_dec21 <- read_csv("sot_removal_reasons_dec21.csv",
+  col_types = cols(
+    QuarterEnding = col_datetime(),
+    HBT = col_factor(),
+    HBTQF = col_character(),
+    PatientType = col_factor(),
+    Specialty = col_factor(),
+    SpecialtyQF = col_character(),
+    Additions = col_double(),
+    AdditionsQF = col_character(),
+    Removals = col_double(),
+    RemovalsQF = col_character(),
+    Attended = col_double(),
+    AttendedQF = col_character(),
+    ReferredBackToGP = col_double(),
+    ReferredBackToGPQF = col_character(),
+    Transferred = col_double(),
+    TransferredQF = col_character(),
+    TreatmentNoLongerRequired = col_double(),
+    TreatmentNoLongerRequiredQF = col_character(),
+    OtherReasons = col_double(),
+    OtherReasonsQF = col_character()
+  )
+) %>%
+  replace_na(list(HBTQF = "sapce",
+                  SpecialtyQF = "sapce",
+                  AdditionsQF = "sapce",
+                  RemovalsQF = "space",
+                  AttendedQF = "sapce",
+                  ReferredBackToGPQF = "sapce",
+                  TransferredQF = "space",
+                  TreatmentNoLongerRequiredQF = "sapce",
+                  OtherReasonsQF = "space"))
+
+
+HBdemography <- read_csv("HBdemography.csv",
+  col_types = cols(
+    `_id` = col_double(),
+    Year = col_character(),
+    HB = col_factor(),
+    HBQF = col_character(),
+    Sex = col_factor(),
+    SexQF = col_character()
+  )
+) %>%
+  replace_na(list(HBQF = "sapce",
+                  SexQF = "sapce"))
+
+urban_rural <- read_csv("urban_rural.csv",
+  col_types = cols(
+    `_id` = col_double(),
+    DataZone = col_factor(),
+    UrbanRural2fold2016 = col_factor(),
+    UrbanRural3fold2016 = col_factor(),
+    UrbanRural6fold2016 = col_factor(),
+    UrbanRural8fold2016 = col_factor()
+  )
+)
+
+simd2020v2_22062020 <- read_csv("simd2020v2_22062020.csv",
+  col_types = cols(
+    DataZone = col_factor(),
+    IntZone = col_factor(),
+    HB = col_factor(),
+    HSCP = col_character(),
+    CA = col_factor(),
+    SIMD2020V2Rank = col_factor(),
+    SIMD2020V2CountryDecile = col_factor(),
+    SIMD2020V2CountryQuintile = col_factor(),
+    SIMD2020V2HBDecile = col_factor(),
+    SIMD2020V2HBQuintile = col_factor(),
+    SIMD2020V2HSCPDecile = col_factor(),
+    SIMD2020V2HSCPQuintile = col_factor(),
+    SIMD2020V2CADecile = col_factor(),
+    SIMD2020V2CAQuintile = col_factor(),
+    SIMD2020V2Most15pc = col_factor(),
+    SIMD2020V2Least15pc = col_factor()
+  ))
+
+consultantsWTE <- read_csv("consultantsWTE.csv", 
+  col_types = cols(
+    Specialty = col_factor()
+  )
+) %>%
+  dplyr::rename(SpecialtyName = Specialty, "NHS Highland"="NHS Highland2")
+
+specialty_reference <- read_csv("specialty-reference.csv")
+speciality_aggregates <- read_csv("speciality_aggregates.csv", 
+  col_types = cols(
+  `Aggregated speciality` = col_character(),
+  Speciality = col_character()
+  )
+)
+speciality_aggregates <- dplyr::rename(speciality_aggregates, AggregatedSpeciality="Aggregated speciality", SpecialtyName=Speciality)
+
+
+hb14_hb19 <- read_csv("hb14_hb19.csv",
+  col_types = cols(
+    HB = col_factor(),
+    HBName = col_character(),
+    HBDateEnacted = col_character(),
+    HBDateArchived = col_character(),
+    Country = col_factor()
+  ), na=" ",
+)
+
+geography_codes_and_labels_country <- read_csv("geography_codes_and_labels_country.csv") %>%
+  dplyr::rename(HB=Country, HBName=CountryName)
+
+
+hospital_codes <- read_csv("hospital_codes.csv",
+  col_types = cols(
+    `_id` = col_double(),
+    Location = col_character(),
+    LocationName = col_character(),
+    Postcode = col_character(),
+    AddressLine = col_character(),
+    HB = col_factor(),
+    HSCP = col_character(),
+    HSCPQF = col_character(),
+    CA = col_factor(),
+    CAQF = col_character(),
+    IntZone = col_factor(),
+    IntZoneQF = col_character(),
+    DataZone = col_factor(),
+    DataZoneQF = col_character(),
+    XCoordinate = col_double(),
+    YCoordinate = col_double(),
+    BasedOnPostcode = col_factor()
+  )
+)%>%
+  replace_na(list(HSCPQF = "sapce",
+                  CAQF = "sapce",
+                  IntZoneQF = "sapce",
+                  DataZoneQF = "space"))
+
+HB_region <- read_csv("HB_region.csv") 
+```
+
+#3.tidy dataset
+##Implicit Missing
+```{r}
+# trends plot
+sot_performance_ongoing_waits_dec21 %>% ggplot(aes(x=MonthEnding, y=NumberWaiting))+geom_point()+facet_wrap(~HBT)
+```
+
+```{r}
+# fill 0
+sot_performance_ongoing_waits_dec21_0 <-
+  sot_performance_ongoing_waits_dec21 %>% 
+  complete(MonthEnding, HBT, Specialty, PatientType,
+           fill = list(NumberWaiting = 0, 
+                       NumberWaitingQF = "add", 
+                       NumberWaitingOver12Weeks = 0,
+                       NumberWaitingOver12WeeksQF = "add",
+                       HBTQF = "add",
+                       SpecialtyQF = "add"),
+           explicit = FALSE) #only fill implicit missing values with zero
+ggplot(sot_performance_ongoing_waits_dec21_0,aes(x = MonthEnding,
+             y = NumberWaiting)) +
+  geom_miss_point() + 
+  facet_wrap(~HBT)
+
+```
+
+
+```{r}
+# trends plot
+sot_removal_reasons_dec21 %>% ggplot(aes(x=QuarterEnding, y=Additions))+geom_point()+facet_wrap(~HBT)
+```
+
+```{r}
+# fill 0
+sot_removal_reasons_dec21_0 <-
+  sot_removal_reasons_dec21 %>% 
+  complete(QuarterEnding, HBT, Specialty, PatientType,
+           fill = list(Additions = 0, 
+                       AdditionsQF = "add",
+                       Removals = 0, 
+                       RemovalsQF = "add",
+                       Attended = 0, 
+                       AttendedQF = "add",
+                       ReferredBackToGP = 0, 
+                       ReferredBackToGPQF = "add",
+                       Transferred = 0, 
+                       TransferredQF = "add",
+                       TreatmentNoLongerRequired = 0,
+                       TreatmentNoLongerRequiredQF = "add",
+                       OtherReasons = 0, 
+                       OtherReasonsQF = "add",
+                       HBTQF = "add",
+                       SpecialtyQF = "add"),
+           explicit = FALSE)#only fill implicit missing values with zero
+sot_removal_reasons_dec21_0
+```
+```{r}
+# check missing
+ggplot(sot_removal_reasons_dec21_0,
+       aes(x = QuarterEnding,
+           y = Additions)) +
+ geom_miss_point() + 
+ facet_wrap(~HBT)
+```
+```{r,warning=FALSE}
+# check missing on variables
+gg_miss_var(sot_removal_reasons_dec21_0, show_pct = TRUE, facet = HBT)
+```
+##Explicit Missing
+```{r}
+## delete missing values
+ongoing_waits <- 
+  sot_performance_ongoing_waits_dec21_0 %>% 
+  filter(HBTQF != ":" & HBTQF != ":u" & 
+         SpecialtyQF != ":" & SpecialtyQF != ":u" &
+         NumberWaitingQF != ":"& NumberWaitingQF != ":u" &
+         NumberWaitingOver12WeeksQF != ":"& NumberWaitingOver12WeeksQF != ":u") %>% dplyr::select(-ends_with("QF"))
+
+removal_reasons <-
+  sot_removal_reasons_dec21_0 %>% 
+  filter(HBTQF != ":" & HBTQF != ":u" & 
+         SpecialtyQF != ":" & SpecialtyQF != ":u" &
+         AdditionsQF != ":"& AdditionsQF != ":u" &
+         RemovalsQF != ":"& RemovalsQF != ":u" &
+         AttendedQF != ":"& AttendedQF != ":u" &
+         ReferredBackToGPQF != ":"& ReferredBackToGPQF != ":u" &
+         TransferredQF != ":"& TransferredQF != ":u" &
+         TreatmentNoLongerRequiredQF != ":"& TreatmentNoLongerRequiredQF != ":u" & OtherReasonsQF != ":"& OtherReasonsQF != ":u") %>% 
+  dplyr::select(-ends_with("QF"))
+
+HBdemography <-
+  HBdemography %>%
+  filter(HBQF != ":" & HBQF != ":u" & 
+         SexQF != ":" & SexQF != ":u") %>% 
+  dplyr::select(-"_id", -ends_with("QF"))
+
+```
+
+##Filter Data
+```{r}
+## filter data
+ongoing_waits <- ongoing_waits %>% filter(PatientType == "Inpatient/Day case" & HBT != "SB0801")
+removal_reasons <- removal_reasons %>% filter(PatientType == "Inpatient/Day case" & HBT != "SB0801")
+```
+
+
+#4.join data
+
+
+```{r}
+#make preparations for data join
+ongoing_prepare <- ongoing_waits %>% 
+  #compute the number of patient waiting on the list within the quarter
+  dplyr::mutate(Quarter = quarter(MonthEnding, fiscal_start = 1)) %>% 
+  separate(MonthEnding, into = c("Year", "Month", "Day"), sep = "-", remove = F) %>%
+  dplyr::select(-Day, -Month, -MonthEnding) %>% 
+  group_by(Year, Quarter, Specialty, PatientType, HBT) %>%
+  dplyr::mutate(
+    NumberWaitSum = sum(NumberWaiting),
+    NumberWaitSumOver12wk = sum(NumberWaitingOver12Weeks)
+  ) %>%
+  ungroup() %>% #select the required columns
+  dplyr::select(-NumberWaiting, -NumberWaitingOver12Weeks) %>%
+  unique()
+```
+```{r}
+#make preparations for data join
+removal_reasons_prepare <- removal_reasons %>%
+  separate(QuarterEnding, into = c("Year", "Quarter", "Day"), sep = "-", remove = T) %>%
+  dplyr::mutate(
+    Quarter = as.numeric(Quarter)/3
+  )
+```
+
+
+```{r}
+#join the ongoing waits dataset and removal reasons dataset by their common #columns
+ongoing_removal <- ongoing_prepare %>% 
+  left_join(removal_reasons_prepare, by = c("Year", "Quarter", "HBT", "PatientType", "Specialty")) %>% 
+  dplyr::select(-Day)
+#figure out the location for missing data and analyse the reasons
+gg_miss_var(ongoing_removal, show_pct = TRUE, facet = HBT)
+```
+
+
+```{r}
+#the missing are caused by data join
+#impute the missing data with the median
+ongoing_removal_impute <- ongoing_removal %>% 
+  group_by(Year, HBT, Quarter) %>%
+  dplyr::mutate(across(c(Additions, Removals, Attended, ReferredBackToGP, Transferred, TreatmentNoLongerRequired, OtherReasons), ~ ifelse(is.na(.x), median(.x, na.rm = T), .))) %>% 
+  ungroup()
+
+```
+
+```{r}
+# tidy data
+HBdemography_prepare <- HBdemography %>% 
+  dplyr::summarise(
+    Year,
+    HB,
+    Sex,
+    AllAges,
+    Child = rowSums(.[5:23]),
+    Young = rowSums(.[24:45]),
+    Middle = rowSums(.[46:70]),
+    Old = rowSums(.[71:95])
+) %>%
+  pivot_wider(
+    names_from = Sex, values_from = c(AllAges, Child, Young, Middle, Old)
+    )
+
+```
+
+
+
+```{r}
+# we directly delete the data for 2021 to build the training set
+ongoing_removal_HBdemography <- 
+  ongoing_removal_impute %>% left_join(HBdemography_prepare, by = c("HBT"="HB", "Year")) %>%
+  filter(Year != "2021") %>%
+  unique()
+```
+
+
+
+```{r}
+# join data
+urban_rural_simd <-
+  urban_rural %>% 
+  full_join(simd2020v2_22062020, by = "DataZone") 
+```
+
+```{r}
+#define a function to obtain the mode of categorical variables
+get_mode <- function(x){
+  #count the number of different levels
+  levels_count <- table(x)
+  #obtain the mode
+  max_count <- levels_count[levels_count == max(levels_count)]
+  mode <- names(max_count)
+  return (mode)
+
+}
+```
+
+
+```{r}
+# tidy data for preparation of join
+urban_rural_simd_prepare <- urban_rural_simd %>%
+  group_by(HB) %>%
+  dplyr::mutate(
+    UrbanRural2fold = get_mode(UrbanRural2fold2016),
+    UrbanRural3fold = get_mode(UrbanRural3fold2016),
+    UrbanRural6fold = get_mode(UrbanRural6fold2016),
+    UrbanRural8fold = get_mode(UrbanRural8fold2016),
+    SIMDCountryDecile = get_mode(SIMD2020V2CountryDecile),
+    SIMDCountryQuintile = get_mode(SIMD2020V2CountryQuintile),
+    SIMDHBQuintile = get_mode(SIMD2020V2HBQuintile)[1],
+    SIMDHBDecile = get_mode(SIMD2020V2HBDecile)[1]
+  ) %>% 
+  ungroup() %>%
+  dplyr::select(HB, UrbanRural2fold, UrbanRural3fold, UrbanRural6fold, UrbanRural8fold, SIMDCountryDecile, SIMDCountryQuintile, SIMDHBQuintile, SIMDHBDecile) %>%
+  unique()
+```
+```{r}
+# join data
+ongoing_removal_HBdemography_urban_simd <- 
+  ongoing_removal_HBdemography %>% 
+  left_join(urban_rural_simd_prepare, by = c("HBT"="HB")) %>% unique()
+```
+
+
+```{r}
+# impute missing with mode
+ongoing_removal_HBdemography_urban_simd_impute <-
+  ongoing_removal_HBdemography_urban_simd %>%
+  group_by(Year, Specialty, Quarter) %>%
+  dplyr::mutate(across(c(UrbanRural2fold, UrbanRural3fold, UrbanRural6fold, UrbanRural8fold, SIMDCountryDecile, SIMDCountryQuintile, SIMDHBDecile, SIMDHBQuintile), ~ ifelse(is.na(.x), get_mode(.x), .))) 
+```
+
+
+
+```{r}
+consultantsWTE_prepare <- consultantsWTE %>%
+  dplyr::select(SpecialtyName, Scotland, starts_with("NHS"))
+```
+```{r}
+# fuzzy match
+specialty_reference_prepare <-
+  specialty_reference %>%
+  dplyr::mutate(SpecialtyName=case_when(
+    SpecialtyName == "All specialties, topic specific" ~ "All specialties",
+    SpecialtyName == "General Psychiatry (Mental Illness)" ~ "General Psychiatry",
+    SpecialtyName == "Psychiatry of Old Age" ~ "Old age psychiatry",
+    SpecialtyName == "Learning Disability" ~ "Psychiatry of learning disability",
+    SpecialtyName == "Restorative Dentistry - Endodontics" ~ "Restorative dentistry",
+    SpecialtyName == "Restorative Dentistry - Periodontics" ~ "Restorative dentistry",
+    SpecialtyName == "Ear, Nose & Throat (ENT)" ~ "Otolaryngology",
+    SpecialtyName == "Restorative Dentistry - Prosthodontics" ~ "Restorative dentistry",
+    SpecialtyName == "Audiological Medicine" ~ "Audio vestibular medicine",
+    SpecialtyName == "General Surgery (excl Vascular)" ~ "General surgery",
+    SpecialtyName == "General Medicine" ~ "General (internal) medicine",
+    SpecialtyName == "Acute Medicine" ~ "Acute internal medicine",
+    SpecialtyName == "Trauma and Orthopaedic Surgery" ~ "Trauma & orthopaedic surgery",
+    SpecialtyName == "Oral and Maxillofacial Surgery" ~ "Oral & maxillofacial surgery",
+    SpecialtyName == "Oral Pathology" ~ "Oral & maxillofacial pathology",
+    SpecialtyName == "Community Dental Practice" ~ "Community dentistry",
+    SpecialtyName == "General Dental Practice" ~ "Not known dental specialty",
+    SpecialtyName == "Accident & Emergency" ~ "Emergency medicine",
+    SpecialtyName == "Community Sexual & Reproductive Health" ~ "Community sexual and reproductive health",
+    SpecialtyName == "Genito-Urinary Medicine" ~ "Genito - urinary medicine",
+    SpecialtyName == "Sport & Exercise Medicine" ~ "Sports & Exercise Medicine",
+    SpecialtyName == "Medical physics" ~ "Medical specialties",
+    SpecialtyName == "Community psychiatric nursing" ~ "Psychiatric specialties",
+    SpecialtyName == "Surgical Podiatry" ~ "Surgical specialties",
+    TRUE ~ as.character(SpecialtyName))) 
+```
+
+```{r}
+#missing values are produced because that some aggregated specialties do not have codes
+consultantsWTE_NHS <- consultantsWTE_prepare %>% stringdist_left_join(specialty_reference_prepare, by = c("SpecialtyName"), max_dist = 0.07, ignore_case = TRUE, distance_col = "distance", method="jw") 
+
+```
+
+
+```{r}
+#the missing values are produced because that we can not find the codes for 2 specialty names: "Sexual & reproductive medicine" and "Not known medical specialty"
+consultantsWTE_NHS_specialty <- speciality_aggregates %>% 
+  left_join(consultantsWTE_NHS, by = c("SpecialtyName"="SpecialtyName.x")) %>%
+  unique() %>%
+  drop_na() %>% 
+  dplyr::select(-SpecialtyName.y, -distance)
+
+
+```
+
+```{r}
+# tidy data
+consultant_HB <- consultantsWTE_NHS_specialty %>% 
+  pivot_longer(c(starts_with("NHS"),Scotland), names_to = "HBName", values_to = "HBConsultantsNumber")
+```
+```{r}
+# tidy daya
+hb <- hb14_hb19 %>% 
+  filter(HBDateArchived == "") %>%
+  dplyr::select(-HBDateArchived, -HBDateEnacted,-Country)
+
+hb_geography <- rbind(hb,geography_codes_and_labels_country)
+
+hb_consultant_HB <- consultant_HB %>%
+  stringdist_left_join(hb_geography, by = "HBName", max_dist = 3, ignore_case = TRUE, distance_col = "distance") %>% dplyr::select(-HBName.x,-distance) %>%dplyr::rename(HBName=HBName.y)
+
+
+```
+
+
+```{r}
+# filter data and join them
+hospital_code_prepare <- 
+  hospital_codes %>%
+  group_by(HB) %>%
+  dplyr::summarise(
+    NumberHospital=n()
+  ) %>%
+  filter(
+    HB != "SB0801" & HB != "SB0802"
+  )
+
+hb_consultant_HB_hospital <-  
+  hb_consultant_HB %>%
+  left_join(hospital_code_prepare, by = "HB")
+```
+```{r}
+#delete 9200003
+hospital <- hb_consultant_HB_hospital %>%
+  dplyr::summarise(
+    HB,
+    NumberHospital
+  ) %>% 
+  drop_na() %>% 
+  unique() 
+hos_scot <- colSums(data.frame(hospital$NumberHospital))
+```
+
+```{r}
+# deal with NA
+hb_consultant_HB_hospital_impute <- hb_consultant_HB_hospital %>%
+  replace_na(list(NumberHospital = hos_scot))
+```
+
+```{r}
+# tidy data
+Data_EDA_prepare <- ongoing_removal_HBdemography_urban_simd_impute  %>%
+  inner_join(hb_consultant_HB_hospital_impute, by=c("HBT"="HB", "Specialty")) %>%
+  ungroup() %>%
+  unique()
+
+Data_EDA <- Data_EDA_prepare %>%
+  dplyr::mutate(
+    PropFemale_AllAges = AllAges_Female/AllAges_All,
+    PropMale_AllAges = AllAges_Male/AllAges_All,
+    PropChild_AllSex = Child_All/AllAges_All,
+    PropYoung_AllSex = Young_All/AllAges_All,
+    PropMiddle_AllSex = Middle_All/AllAges_All,
+    PropOld_AllSex = Old_All/AllAges_All,
+    Difference_Add_Rem = Additions-Removals,
+    Quarter = 3*Quarter
+    
+  )%>%
+  unite("QuarterEnding", Year, Quarter, sep="-", remove = F) %>%
+  dplyr::summarise(
+    HBT,
+    NumberWaitSum,
+    Year = as.numeric(Year),
+    QuarterEnding=ceiling_date(ym(QuarterEnding),'month') - days(1),
+    Quarter = as.factor(Quarter/3),
+    Specialty = as.factor(Specialty),
+    UrbanRural2fold = as.factor(UrbanRural2fold),
+    UrbanRural3fold = as.factor(UrbanRural3fold),
+    UrbanRural6fold = as.factor(UrbanRural6fold),
+    UrbanRural8fold = as.factor(UrbanRural8fold),
+    SIMDCountryDecile = as.factor(SIMDCountryDecile),
+    SIMDCountryQuintile = as.factor(SIMDCountryQuintile),
+    SIMDHBQuintile = as.factor(SIMDHBQuintile),
+    SIMDHBDecile = as.factor(SIMDHBDecile),
+    SpecialtyName = as.factor(SpecialtyName),
+    AggregatedSpeciality=as.factor(AggregatedSpeciality),
+    Population = AllAges_All,
+    PropFemale_AllAges,
+    PropChild_AllSex,
+    PropOld_AllSex,
+    Difference_Add_Rem,
+    HBConsultantsNumber,
+    NumberHospital
+    
+  ) %>%
+  filter(HBT != "S92000003")
+
+
+```
+#5.EDA
+##5.1 Single Variable
+
+```{r,fig.height=7,fig.width=10}
+# bar plot
+PltHBT <-ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = HBT))
+
+PltSpec <-ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = Specialty))
+
+PltUrban2 <-ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = UrbanRural2fold))
+
+PltUrban3 <-ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = UrbanRural3fold)) 
+
+PltUrban6 <-ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = UrbanRural6fold))
+
+PltUrban8 <-ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = UrbanRural8fold))
+
+PltC10 <-ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = SIMDCountryDecile))
+
+PltC5 <-ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = SIMDCountryQuintile))
+
+PltHB5 <-ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = SIMDHBQuintile)) 
+
+PltHB10 <-ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = SIMDHBDecile))
+
+p1 <- plot_grid(PltHBT, PltSpec, PltUrban2, PltUrban3, PltUrban6, PltUrban8,
+          PltC10, PltC5, PltHB5, PltHB10,
+          nrow = 5, ncol = 2) 
+  
+annotate_figure(p1, top = text_grob(
+    "Variation of Single Categorical Variable",
+    hjust = 0.5, size = 30, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data", hjust = 1.4, size = 20))
+  
+```
+
+```{r,fig.height=7,fig.width=10}
+# histogram
+pltWait <- ggplot(data = Data_EDA) +
+  geom_histogram(mapping = aes(x = NumberWaitSum),bins = 50)
+
+pltAR <- ggplot(data = Data_EDA) +
+  geom_histogram(mapping = aes(x = Difference_Add_Rem), bins = 50)
+
+pltHBC <- ggplot(data = Data_EDA) +
+  geom_histogram(mapping = aes(x = HBConsultantsNumber), bins = 50)
+
+pltHos <- ggplot(data = Data_EDA) +
+  geom_bar(mapping = aes(x = NumberHospital))
+
+pltPop <- ggplot(data = Data_EDA) +
+  geom_histogram(mapping = aes(x = Population), bins = 50)
+
+pltF <- ggplot(data = Data_EDA) +
+  geom_histogram(mapping = aes(x = PropFemale_AllAges), bins = 50) 
+      
+pltC <- ggplot(data = Data_EDA) +
+  geom_histogram(mapping = aes(x = PropChild_AllSex), bins = 50)
+
+pltO <- ggplot(data = Data_EDA) +
+  geom_histogram(mapping = aes(x = PropOld_AllSex), bins = 50)
+
+p2 <- plot_grid(pltWait, pltAR, pltHBC, pltHos,
+          pltPop, pltF, pltC, pltO,
+          nrow = 4, ncol = 2) 
+
+annotate_figure(p2, top = text_grob(
+    "Variation of Single Numeric Variable",
+    hjust = 0.5, size = 30, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data", hjust = 1.4, size = 20))
+```
+
+```{r}
+# zoom plot to check outliers
+pltWait_ <- ggplot(data = Data_EDA) +
+  geom_histogram(mapping = aes(x = NumberWaitSum),bins = 50)+
+  coord_cartesian(ylim = c(0, 50))
+
+pltAR_<- ggplot(data = Data_EDA) +
+  geom_histogram(mapping = aes(x = Difference_Add_Rem),bins = 50)+
+  coord_cartesian(ylim = c(0, 50))
+
+p3 <- plot_grid(pltWait_, pltAR_,
+          nrow = 1, ncol = 2)
+
+annotate_figure(p3, top = text_grob(
+    "Zoom of the NumberWaitSum and Difference_Add_Rem",
+    hjust = 0.5, size = 15, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data", hjust = 2, size = 7))
+```
+
+
+
+```{r}
+# histogram by HBT
+p4<-ggplot(data = Data_EDA) +
+  geom_histogram(mapping = aes(x = PropFemale_AllAges), bins = 50) +
+  facet_wrap(~HBT)
+
+annotate_figure(p4, top = text_grob(
+    "Variation of Proportion of Female for different HBTs",
+    hjust = 0.5, size = 15, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data", hjust = 1.6, size = 7))
+```
+
+
+
+
+##5.2 Multiple Variables
+
+
+```{r}
+# trend plot
+Wait_Date <- Data_EDA %>%
+  group_by(HBT, QuarterEnding) %>%
+  dplyr::summarise(
+    NumberWait=sum(NumberWaitSum)
+  )
+
+
+p5 <- Wait_Date %>%
+  ggplot(aes(QuarterEnding, NumberWait, colour = HBT)) +
+  geom_line() 
+
+annotate_figure(p5, top = text_grob(
+    "The Number of Waiting Inpatient/Daycase for HBT \n within the Quarter over time",
+    hjust = 0.5, size = 15, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data (from 2012-12-31 to 2020-12-31)", hjust = 0.8, size = 8))
+```
+
+
+```{r}
+#trends plot
+AR_Date <- Data_EDA %>%
+  group_by(HBT, QuarterEnding) %>%
+  dplyr::summarise(
+    Difference_Add_Rem=sum(Difference_Add_Rem)
+  )
+
+
+p6 <- AR_Date %>%
+  ggplot(aes(QuarterEnding, Difference_Add_Rem, colour = HBT)) +
+  geom_point() +
+  stat_smooth()
+
+
+annotate_figure(p6, top = text_grob(
+    "The Difference of Additions and Removals for HBT \n within the Quarter over time",
+    hjust = 0.5, size = 15, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data (from 2012-12-31 to 2020-12-31)", hjust = 0.8, size = 8))
+```
+
+
+```{r}
+# scatter plot
+p7 <- Data_EDA %>%
+  ggplot(aes(x=Year)) +
+  geom_point(aes(y=Population, colour=HBT)) 
+
+p8 <- Data_EDA %>%
+  ggplot(aes(x=Year)) +
+  geom_point(aes(y=PropFemale_AllAges, colour=HBT)) + 
+  labs(y="PropFemale")
+
+p9 <- Data_EDA %>%
+  ggplot(aes(x=Year)) +
+  geom_point(aes(y=PropChild_AllSex, colour=HBT)) + 
+  labs(y="PropChild")
+
+p10 <- Data_EDA %>%
+  ggplot(aes(x=Year,y=PropOld_AllSex, colour=HBT)) +
+  geom_point() + 
+  labs(y="PropOld") 
+
+p7_10 <- ggarrange(p7,p8,p9,p10,
+                   ncol = 2, nrow = 2, common.legend = TRUE)
+
+annotate_figure(p7_10, top = text_grob(
+    "The Trends of Population, Sex Proportion, and Age Proportion \n for HBT over Years",
+    hjust = 0.5, size = 13, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data (from 2012 to 2020)", hjust = 1, size = 8))
+```
+
+
+
+```{r}
+# scatter plot
+p11 <- Data_EDA %>%
+  group_by(HBT)%>%
+  dplyr::summarise(
+    HBConsultantsNumber=sum(HBConsultantsNumber)
+  ) %>%
+  ggplot(aes(x=fct_reorder(HBT,HBConsultantsNumber))) +
+  geom_point(aes(y=HBConsultantsNumber)) + 
+  labs(x="HBT")+
+  coord_flip()
+
+p12 <- Data_EDA %>%
+  ggplot(aes(x=fct_reorder(HBT,as.numeric(NumberHospital)))) +
+  geom_point(aes(y=NumberHospital)) + 
+  labs(x="HBT")+
+  coord_flip()
+
+p13 <- Data_EDA %>%
+  ggplot(aes(x=fct_reorder(HBT,as.numeric(UrbanRural6fold)))) +
+  geom_point(aes(y=UrbanRural6fold)) +
+  labs(x="HBT")+
+  coord_flip()
+
+p14 <- Data_EDA %>%
+  ggplot(aes(x=fct_reorder(HBT,as.numeric(SIMDHBDecile)))) +
+  geom_point(aes(y=SIMDHBDecile)) + 
+  labs(x="HBT")+
+  coord_flip()
+
+
+
+p11_14 <- ggarrange(p11,p12,p13,p14,
+                   ncol = 2, nrow = 2, common.legend = TRUE)
+
+annotate_figure(p11_14, top = text_grob(
+    "The Consultants, Hospitals, Deprivation, and  Rual Status \n for Different HBT",
+    hjust = 0.5, size = 13, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data", hjust = 1.6, size = 8))
+```
+
+
+```{r}
+# boxplot
+Data1<-Data_EDA %>%
+  group_by(Year,HBT,Quarter)%>%
+  dplyr::summarise(
+    NumberWait = sum(NumberWaitSum)
+    
+  ) %>% ungroup
+
+p15 <- ggplot(data = Data1, mapping = aes(x = HBT, y = NumberWait, colour=HBT)) + 
+  geom_boxplot() +
+  stat_summary(fun=mean, colour="red", geom="point", 
+               shape=18, size=2)+ 
+  coord_flip()
+
+Data2<-Data_EDA %>%
+  group_by(Year,Specialty,Quarter)%>%
+  dplyr::summarise(
+    NumberWait = mean(NumberWaitSum)
+    
+  ) %>% ungroup
+
+
+p16 <- ggplot(data = Data2, mapping = aes(x = Specialty, y = NumberWait, colour=Specialty)) + geom_boxplot() + 
+  coord_flip()
+
+Data3<-Data_EDA %>%
+  group_by(Year,HBT,Quarter)%>%
+  dplyr::summarise(
+    UrbanRural6fold,
+    SIMDCountryQuintile,
+    SIMDHBDecile,
+    NumberWait = sum(NumberWaitSum),
+    NumberHospital = NumberHospital,
+    
+  ) %>% ungroup
+
+p17 <- ggplot(data = Data3, mapping = aes(x = UrbanRural6fold, y = NumberWait, colour=UrbanRural6fold)) + geom_boxplot() 
+
+p18 <- ggplot(data = Data3, mapping = aes(x = SIMDCountryQuintile, y = NumberWait, colour=SIMDCountryQuintile)) + geom_boxplot()
+
+p19 <- ggplot(data = Data3, mapping = aes(x = SIMDHBDecile, y = NumberWait, colour=SIMDHBDecile)) + geom_boxplot() 
+
+p20 <- ggplot(data = Data3, mapping = aes(x = as.factor(NumberHospital), y = NumberWait, colour=as.factor(NumberHospital))) + geom_boxplot() +
+  labs(x="NumberHospital")
+
+p15_16 <- ggarrange(p15,p16,
+                   ncol = 2, nrow = 1, common.legend = TRUE)
+
+annotate_figure(p15_16, top = text_grob(
+    "The Relationship between Waiting Number and HBT/Specialty",
+    hjust = 0.5, size = 13, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data", hjust = 1.6, size = 8))
+
+p17_19 <- ggarrange(p17,p18,p19,p20,
+                   ncol = 2, nrow = 2, common.legend = TRUE)
+
+annotate_figure(p17_19, top = text_grob(
+    "The Relationship between Waiting Number and Rural/Deprivation/Hospital Levels",
+    hjust = 0.5, size = 13, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data", hjust = 1.6, size = 8))
+```
+
+
+
+
+
+
+```{r}
+# scatter plot
+Data_D<-Data_EDA %>%
+  group_by(HBT, Specialty)%>%
+  dplyr::summarise(
+    Difference_Add_Rem=mean(Difference_Add_Rem),
+    NumberWaitSum = mean(NumberWaitSum)
+    
+  ) %>% ungroup
+
+p_D <- ggplot(data = Data_D, mapping = aes(x = Difference_Add_Rem, y = NumberWaitSum, colour=HBT)) +
+  geom_point()
+
+
+
+Data_C<-Data_EDA %>%
+  group_by(HBT, Specialty)%>%
+  dplyr::summarise(
+    HBConsultantsNumber=mean(HBConsultantsNumber),
+    NumberWaitSum = mean(NumberWaitSum)
+    
+  ) %>% ungroup
+
+
+p_C <- ggplot(data = Data_C, mapping = aes(x = HBConsultantsNumber, y = NumberWaitSum, colour=HBT)) + 
+  geom_point()
+
+
+
+Data_P<-Data_EDA %>%
+  group_by(HBT, Specialty)%>%
+  dplyr::summarise(
+    Population=mean(Population),
+    PropFemale_AllAges=mean(PropFemale_AllAges),
+    PropChild_AllSex=mean(PropChild_AllSex),
+    PropOld_AllSex=mean(PropOld_AllSex),
+    NumberWaitSum = mean(NumberWaitSum)
+    
+  ) %>% ungroup
+
+
+p_P <- ggplot(data = Data_P, mapping = aes(x = Population, y = NumberWaitSum, colour=HBT)) + 
+  geom_point()
+
+
+
+p_F <- ggplot(data = Data_P, mapping = aes(x = PropFemale_AllAges, y = NumberWaitSum, colour=HBT)) +
+  geom_point()
+
+
+p_Ch <- ggplot(data = Data_P, mapping = aes(x = PropChild_AllSex, y = NumberWaitSum, colour=HBT)) + 
+  geom_point()
+
+
+p_O <- ggplot(data = Data_P, mapping = aes(x = PropOld_AllSex, y = NumberWaitSum, colour=HBT)) + 
+  geom_point()
+
+
+p <- ggarrange(p_D,p_C,p_P,p_F,p_Ch,p_O,
+                   ncol = 2, nrow = 3, common.legend = TRUE)
+
+annotate_figure(p, top = text_grob(
+    "The Relationship between Waiting Number and Numeric Variables",
+    hjust = 0.5, size = 13, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data", hjust = 1.5, size = 8))
+```
+
+
+
+
+```{r}
+# letter value plot 
+library(lvplot)
+C1<-ggplot(Data_EDA, aes(x = UrbanRural6fold, y = HBConsultantsNumber, fill=HBT)) +
+  geom_lv()
+C2<-ggplot(Data_EDA, aes(x = NumberHospital, y = HBConsultantsNumber, fill=HBT)) +
+  geom_lv()
+C3<-ggplot(Data_EDA, aes(x = SIMDHBDecile, y = HBConsultantsNumber, fill=HBT)) +
+  geom_lv()
+C4<-ggplot(Data_EDA, aes(x = SIMDCountryQuintile, y = HBConsultantsNumber, fill=HBT)) +
+  geom_lv()
+ggarrange(C1,C2,C3,C4,
+                   ncol = 2, nrow = 2, common.legend = TRUE)
+
+```
+
+
+
+
+
+```{r}
+# heatmap
+Data_EDA %>% 
+  dplyr::count(SIMDCountryQuintile, UrbanRural6fold) %>%  
+  ggplot(mapping = aes(x = SIMDCountryQuintile, y = UrbanRural6fold)) +
+    geom_tile(mapping = aes(fill = n))
+```
+
+```{r}
+#heatmap
+pltCC <- Data_EDA %>%
+  dplyr::count(HBT, Specialty) %>%
+  group_by(HBT) %>%
+  dplyr::mutate(prop = n / sum(n)) %>%
+  ggplot(mapping = aes(x = HBT, y = Specialty)) +
+  geom_tile(mapping = aes(fill = prop))
+
+annotate_figure(pltCC, top = text_grob(
+    "Heatmap of HBT and Specialty",
+    hjust = 0.5, size = 13, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data", hjust = 1.6, size = 8))
+```
+
+
+
+```{r}
+# letter value plot
+Data_EDA %>% ggplot(aes(x = HBT, y = NumberWaitSum, fill = cut_number(PropFemale_AllAges, 3))) +
+  geom_lv(outlier.shape=NA) + labs(fill="Female Proportion")
+```
+
+```{r}
+Data_EDA %>% ggplot(aes(x = as.factor(Year), y = NumberWaitSum, fill = as.factor(Quarter))) +
+  geom_lv(outlier.shape=NA) +ylim(c(0,7500))+labs(fill="Quarter", x="Year")
+```
+
+
+
+
+
+
+```{r}
+# data for models
+Data_Model <- Data_EDA %>%
+  dplyr::mutate(
+    Year = Year - 2011,
+    Quarter = as.factor(Quarter),
+    
+  ) %>% dplyr::select(HBT,NumberWaitSum,Year, Quarter, Specialty, SIMDCountryQuintile, Population,PropFemale_AllAges,PropOld_AllSex,PropChild_AllSex, Difference_Add_Rem,HBConsultantsNumber,NumberHospital,UrbanRural2fold)
+
+```
+
+
+
+
+
+```{r}
+# correlation compute 
+library(faraway)
+library(corrplot)
+DataCor <- Data_Model %>%
+  dplyr::summarise(
+    NumberWaitSum,
+    Year,
+    Population,
+    PropFemale_AllAges,
+    PropChild_AllSex,
+    PropOld_AllSex,
+    Difference_Add_Rem,
+    HBConsultantsNumber,
+    NumberHospital
+  ) 
+
+cor(DataCor)
+corr=cor(DataCor)
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+# matrix of the p-value of the correlation
+p.mat <- cor.mtest(DataCor)
+
+corrplot(corr, type="upper", method = "color", addCoef.col = "black",
+          tl.col="black", tl.cex=0.7, #修改字体
+         p.mat = p.mat, sig.level = 0.01,
+         diag=F, title = "Correlation Plot", mar=c(0, 1, 1, 0)) 
+```
+
+
+
+```{r}
+#boxplot
+Explorer1 <- Data_EDA %>% dplyr::summarise(
+  UrbanRural2fold,
+  PropFemale_AllAges
+  ) %>% ggplot(aes(x=UrbanRural2fold, y=PropFemale_AllAges))+
+  geom_boxplot()
+
+Explorer2 <- Data_EDA %>% dplyr::summarise(
+  SIMDCountryQuintile,
+  PropFemale_AllAges
+  ) %>% ggplot(aes(x=SIMDCountryQuintile, y=PropFemale_AllAges)) +
+  geom_boxplot()
+
+Explore1_2 <- ggarrange(Explorer1,Explorer2,
+                   ncol = 2, nrow = 1, common.legend = TRUE)
+
+annotate_figure(Explore1_2, top = text_grob(
+    "The Relationship between Female Proportion and Rural/Deprivation levels",
+    hjust = 0.5, size = 14, face = "bold"), bottom = 
+    text_grob("Data Source: Scottish Health and Social Care Open Data", hjust = 1.6, size = 8))
+```
+
+
+
+```{r}
+# scale data
+numcols <- c("Year", "Difference_Add_Rem","PropFemale_AllAges","PropOld_AllSex", "HBConsultantsNumber", "NumberHospital")
+DataM <- Data_Model 
+DataM[,numcols] <- scale(DataM[,numcols], center=F)
+```
+```{r}
+# Poisson Mixed Model
+modgh <- glmer(NumberWaitSum ~ offset(log(Population)) + Year + PropFemale_AllAges + PropOld_AllSex + (1|HBT) +(1|Specialty), family=poisson, data=DataM, nAGQ = 0)
+summary(modgh)
+```
+
+```{r}
+#The improvement for Poisson Mixed Model
+modgh_ <- glmer(NumberWaitSum ~ offset(log(Population)) + Year + PropFemale_AllAges + PropOld_AllSex + (1|HBT/Specialty), family=poisson, data=DataM, nAGQ = 0)
+summary(modgh_)
+```
+
+
+```{r}
+# cosmetic
+theme_set(theme_bw()+
+theme(panel.spacing=grid::unit(0,"lines")))
+
+# Zero-Inflated Mixed Model
+fit_zipoisson <- glmmTMB(NumberWaitSum ~ offset(log(Population)) + Year  + Quarter+ Difference_Add_Rem + UrbanRural2fold +  PropFemale_AllAges + PropOld_AllSex + HBConsultantsNumber +(1|HBT)+(1|Specialty),
+                         data=DataM,
+                         ziformula = ~1,
+                         family=poisson)
+  
+summary(fit_zipoisson)
+```
+
+
+```{r}
+#Improvement for Zero-Inflated Mixed Model
+fit_zipoisson_ <- glmmTMB(NumberWaitSum ~ offset(log(Population)) + Year  + Quarter+ Difference_Add_Rem + UrbanRural2fold +  PropFemale_AllAges + PropOld_AllSex + HBConsultantsNumber +(1|HBT/Specialty),
+                         data=DataM,
+                         ziformula = ~1,
+                         family=poisson)
+  
+summary(fit_zipoisson_)
+```
+#6.Model Check
+```{r,fig.height=5}
+# caterpillar plot
+lme4:::dotplot.ranef.mer(ranef(fit_zipoisson)$cond)
+```
+
+```{r}
+# residual plot
+plot(modgh_)
+```
+
+```{r, warning=F}
+# diagnosis plot
+library(DHARMa)
+res = simulateResiduals(fit_zipoisson)
+plot(res)
+res_ = simulateResiduals(fit_zipoisson_)
+plot(res_)
+ress = simulateResiduals(modgh)
+plot(ress)
+```
+
+
+```{r}
+# check outliers and dispersion
+halfnorm(residuals(modgh))
+
+plot(log(fitted(modgh)),log((DataM2$NumberWaitSum-fitted(modgh))^2), xlab=
+expression(hat(mu)),ylab=expression((y-hat(mu))^2))
+abline(0,1)
+```
+
+
+```{r}
+# check outliers and dispersion
+halfnorm(residuals(fit_zipoisson))
+plot(log(fitted(fit_zipoisson)),log((DataM2$NumberWaitSum-fitted(fit_zipoisson))^2), xlab=
+expression(hat(mu)),ylab=expression((y-hat(mu))^2))
+abline(0,1)
+```
+
+
+```{r}
+# check for Zero Inflation
+library(pscl)
+modp <- glm(NumberWaitSum ~ Population+PropFemale_AllAges+PropChild_AllSex+HBConsultantsNumber+Difference_Add_Rem, data=DataM, family=poisson)
+ocount <- table(DataM$NumberWaitSum)[1:6]
+pcount <- colSums(predprob(modp)[,1:6])
+plot(pcount,ocount,type="n",xlab="Predicted",ylab="Observed")
+text(pcount,ocount, 0:5)
+```
+
+#7.Predict
+
+
+
+```{r}
+# data set for prediction
+Data_p<-Data_Model %>%
+  filter(Year=="9") %>%
+  dplyr::select(HBT, Specialty, Quarter, SIMDCountryQuintile,Population,starts_with("Prop"),HBConsultantsNumber,UrbanRural2fold,NumberHospital)
+
+ongoing_removal_2021 <- ongoing_removal_impute%>% filter(Year == "2021") 
+
+ongoing_removal_2021$Quarter = as.factor(ongoing_removal_2021$Quarter)
+
+DP <- 
+  ongoing_removal_2021 %>% inner_join(Data_p, by = c("HBT", "Specialty", "Quarter")) %>%
+  dplyr::mutate(
+    Difference_Add_Rem = Additions-Removals,
+    Year=as.numeric(Year)-2011
+    
+  ) %>% dplyr::select(
+    HBT,Specialty,Quarter,NumberWaitSum,SIMDCountryQuintile,starts_with("Prop"),
+    Population,HBConsultantsNumber,UrbanRural2fold,NumberHospital,Year,Difference_Add_Rem
+  )
+   
+```
+```{r}
+pr <- predict(fit_zipoisson, newdata=DP, se=T, type="response")
+pr <- data.frame(pr)
+
+df_pred <- DP %>%
+  dplyr::mutate(
+    fit = pr$fit,
+    se_fit = pr$se.fit
+  ) %>% dplyr::select(NumberWaitSum,fit,se_fit)
+df_pred
+
+```
+```{r}
+# plot observed values and predicted values
+ggplot(df_pred, aes(x=NumberWaitSum, y=fit))+geom_point()
+```
+
+
+
+```{r}
+# potential prediction for analysis
+fit_predict <- glmmTMB(NumberWaitSum ~ offset(log(Population)) + Year + Quarter + UrbanRural2fold + SIMDCountryQuintile+ PropFemale_AllAges + PropOld_AllSex + (1|HBT/Specialty),
+                         data=DataM,
+                         ziformula = ~1,
+                         family=poisson)
+  
+summary(fit_predict)
+```
+
+
